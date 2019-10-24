@@ -5,6 +5,7 @@ gentest 用于快速生成基于 gomock + testify 风格的单元测试
 example after creating unit test with gentest new ：
 
 func TestCheck(t *testing.T) {
+	
 	a := assert.New(t)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
