@@ -186,7 +186,8 @@ func (e *engine) writeTestFile() {
 	testFileName := e.testFileName()
 	testFile := iostream.File(testFileName)
 	if testFile == nil {
-		return
+		fmt.Printf("the file : %s is exist \n", testFileName)
+		os.Exit(1)
 	}
 	defer testFile.Close()
 

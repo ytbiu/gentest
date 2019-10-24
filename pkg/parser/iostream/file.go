@@ -3,15 +3,13 @@ package iostream
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 )
 
 func File(path string) *os.File {
 	_, err := os.Stat(path)
-	if os.IsExist(err) {
-		fmt.Printf("the file : %s is exist \n", path)
+	if !os.IsNotExist(err) {
 		return nil
 	}
 
