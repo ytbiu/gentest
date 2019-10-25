@@ -31,7 +31,6 @@ type engine struct {
 }
 
 func NewEngine(setArgs ...func(e *engine)) Engine {
-
 	e := &engine{}
 
 	for _, setArg := range setArgs {
@@ -45,7 +44,6 @@ func NewEngine(setArgs ...func(e *engine)) Engine {
 }
 
 func (e *engine) check() {
-
 	if e.fileName == "" {
 		fmt.Println("fileName is empty")
 		os.Exit(1)
@@ -91,8 +89,28 @@ func (e *engine) Run() {
 	fmt.Println("done")
 }
 
-func (e *engine) testFileName() string {
+func (e *engine) execMockCmd() {
+	shell.MockGen(e.mockFileName(), e.mockSrcName(), e.mockPkgName())
+}
 
+func (e *engine) writeTestFile() {
+	testFile := iostream.File(e.testFileName())
+	if testFile == nil {
+		fmt.Printf("the file : %s is exist \n", e.testFileName())
+		os.Exit(1)
+	}
+	defer testFile.Close()
+
+	content := e.replaceContentTemplate()
+
+	if _, err := testFile.WriteString(content); err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+
+func (e *engine) testFileName() string {
 	prefix := strings.Split(e.fileName, ".")[0]
 	return fmt.Sprintf("%s_test.go", prefix)
 }
@@ -106,12 +124,10 @@ func (e *engine) mockSrcName() string {
 }
 
 func (e *engine) testMethodName() string {
-
 	return "Test" + strings.Title(e.methodName)
 }
 
 func (e *engine) testPackageName() string {
-
 	dir, _ := os.Getwd()
 	dirGroup := strings.Split(dir, "/")
 	return dirGroup[len(dirGroup)-1]
@@ -119,12 +135,11 @@ func (e *engine) testPackageName() string {
 
 func (e *engine) mockFileName() string {
 
-	prefix := strings.Split(e.fileName, ".")[0]
+	prefix := strings.Split(e.mockSrcFileName, ".")[0]
 	return e.mockPath + "/" + fmt.Sprintf("%s_mock.go", prefix)
 }
 
 func (e *engine) mockPkgName() string {
-
 	if !strings.Contains(e.mockPath, "/") {
 		return e.mockPath
 	}
@@ -181,20 +196,48 @@ func getMockDatas(infoTable map[string][]string, mockPkgName string) string {
 	return newMockDatas.String()
 }
 
-func (e *engine) writeTestFile() {
+func (e *engine) interfaceFromMock() map[string][]string {
+	infoTable := make(map[string][]string)
 
-	testFileName := e.testFileName()
-	testFile := iostream.File(testFileName)
-	if testFile == nil {
-		fmt.Printf("the file : %s is exist \n", testFileName)
-		os.Exit(1)
+	iostream.ReadByLineWithDo(e.mockFileName(), func(line string) {
+		if containsInterfaceName(line) {
+			getInterfaceName(line)
+			return
+		}
+
+		for name := range infoTable {
+			methodSign, found := getMethodSignFromLine(line, name)
+			if !found {
+				continue
+			}
+			replaceParamWithNil(methodSign)
+
+			infoTable[name] = append(infoTable[name], methodSign)
+		}
+	})
+
+	return infoTable
+}
+
+func (e *engine) getMethodNames() []string {
+	var methodNames []string
+	if e.methodName != "" {
+		return append(methodNames, e.methodName)
 	}
-	defer testFile.Close()
 
+	iostream.ReadByLineWithDo(e.fileName, func(line string) {
+		if containsMethodName(line) {
+			methodNames = append(methodNames, getMethodName(line))
+		}
+	})
+
+	return methodNames
+}
+
+func (e *engine)replaceContentTemplate() string  {
 	infoTable := e.interfaceFromMock()
 	mockDatas, importsPkgs := e.mockInfo(infoTable)
-
-	methodNames := e.getMethondNames()
+	methodNames := e.getMethodNames()
 
 	var funcContents strings.Builder
 	for _, methodName := range methodNames {
@@ -208,93 +251,70 @@ func (e *engine) writeTestFile() {
 		importPkgsTemplate, importsPkgs,
 		funcContentsTemplate, funcContents.String(),
 	)
-	content = replacer.Replace(content)
+	return replacer.Replace(content)
+}
 
-	testFile.Truncate(0)
-	if _, err := testFile.WriteString(content); err != nil {
-		fmt.Println(err)
-		return
+func containsMethodName(line string) bool {
+	return strings.Contains(line, "func ") &&
+		strings.Contains(line, "(") &&
+		strings.Contains(line, ")") &&
+		strings.Contains(line, "{") &&
+		!strings.Contains(line, "//")
+}
+
+func containsInterfaceName(line string) bool {
+	return strings.Contains(line, "type") &&
+		strings.Contains(line, "struct ") &&
+		!strings.Contains(line, "Recorder") &&
+		!strings.Contains(line, "//")
+}
+
+func getMethodSignFromLine(line, name string) (string, bool) {
+	methodFlag := fmt.Sprintf("*%s) ", name)
+	if !strings.Contains(line, methodFlag) {
+		return "", false
+	}
+
+	tmp := strings.Split(line, methodFlag)
+	methodSign := strings.Split(tmp[len(tmp)-1], ")")[0] + ")"
+
+	if methodSign == "EXPECT()" {
+		return "", false
+	}
+
+	return methodSign, true
+}
+
+func replaceParamWithNil(methodSign string) {
+	indexLeft := strings.Index(methodSign, "(")
+	indexRight := strings.Index(methodSign, ")")
+	params := strings.TrimSpace(methodSign[indexLeft+1 : indexRight])
+
+	if len(params) > 0 {
+		paramLen := len(strings.Split(params, " "))
+		if paramNum := math.Ceil(float64(paramLen) / 2.0); paramNum > 0 {
+			var mockParams strings.Builder
+			for i := 0; i < int(paramNum); i++ {
+				mockParams.WriteString("nil,")
+			}
+			methodSign = methodSign[:indexLeft+1] + mockParams.String() + methodSign[indexRight:]
+		}
 	}
 }
 
-func (e *engine) execMockCmd() {
-	shell.MockGen(e.mockFileName(), e.mockSrcName(), e.mockPkgName())
-}
-
-func (e *engine) interfaceFromMock() map[string][]string {
-	infoTable := make(map[string][]string)
-
-	iostream.ReadByLineWithDo(e.mockFileName(), func(line string) {
-		if strings.Contains(line, "type") &&
-			strings.Contains(line, "struct ") &&
-			!strings.Contains(line, "Recorder") &&
-			!strings.Contains(line, "//") {
-
-			tmp := strings.Split(strings.TrimSpace(strings.Split(line, "struct")[0]), " ")
-			infName := tmp[len(tmp)-1]
-
-			infoTable[infName] = []string{}
-			return
-		}
-
-		for name := range infoTable {
-			methodFlag := fmt.Sprintf("*%s) ", name)
-			if strings.Contains(line, methodFlag) {
-				tmp := strings.Split(line, methodFlag)
-				methodSign := strings.Split(tmp[len(tmp)-1], ")")[0] + ")"
-
-				if methodSign == "EXPECT()" {
-					continue
-				}
-
-				indexLeft := strings.Index(methodSign, "(")
-				indexRight := strings.Index(methodSign, ")")
-				params := strings.TrimSpace(methodSign[indexLeft+1 : indexRight])
-
-				if len(params) > 0 {
-					paramLen := len(strings.Split(params, " "))
-					if paramNum := math.Ceil(float64(paramLen) / 2.0); paramNum > 0 {
-						var mockParams strings.Builder
-						for i := 0; i < int(paramNum); i++ {
-							mockParams.WriteString("nil,")
-						}
-						methodSign = methodSign[:indexLeft+1] + mockParams.String() + methodSign[indexRight:]
-					}
-				}
-
-				infoTable[name] = append(infoTable[name], methodSign)
-
-			}
-		}
-	})
-
-	return infoTable
-}
-
-func (e *engine) getMethondNames() []string {
-	var methodNames []string
-	if e.methodName != "" {
-		return append(methodNames, e.methodName)
+func getMethodName(line string) string  {
+	splited := strings.Split(line, " ")
+	var methodName string
+	if strings.Contains(line, "func (") {
+		methodName = splited[3]
+	} else {
+		methodName = splited[1]
 	}
+	i := strings.Index(methodName, "(")
+	return methodName[:i]
+}
 
-	iostream.ReadByLineWithDo(e.fileName, func(line string) {
-		if strings.Contains(line, "func ") &&
-			strings.Contains(line, "(") &&
-			strings.Contains(line, ")") &&
-			strings.Contains(line, "{") &&
-			!strings.Contains(line, "//") {
-
-			splited := strings.Split(line, " ")
-			var methodName string
-			if strings.Contains(line, "func (") {
-				methodName = splited[3]
-			} else {
-				methodName = splited[1]
-			}
-			i := strings.Index(methodName, "(")
-			methodNames = append(methodNames, methodName[:i])
-		}
-	})
-
-	return methodNames
+func getInterfaceName(line string) string  {
+	tmp := strings.Split(strings.TrimSpace(strings.Split(line, "struct")[0]), " ")
+	return tmp[len(tmp)-1]
 }
