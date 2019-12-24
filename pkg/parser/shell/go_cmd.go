@@ -8,21 +8,16 @@ import (
 
 func GoGet(goPkgGroup ...string) {
 
-	// fmt.Println(fmt.Sprintf(`getting go package ...
-	// 	%s,
-	// 	%s,
-	// 	%s,`,
-	// 	pkgGoMock,
-	// 	pkgTestify,
-	// 	pkgMockgen),
-	// )
-
 	for _, goPkg := range goPkgGroup {
 		cmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("go get %s", goPkg))
 		stdout, _ := cmd.StdoutPipe()
 		go echo(stdout, fmt.Sprintf("exec go get %s", goPkg))
 		stderr, _ := cmd.StderrPipe()
-		go echo(stderr, fmt.Sprintf("exec go get %s err :", goPkg))
+		go func() {
+			if stderr != nil{
+				echo(stderr, fmt.Sprintf("exec go get %s err :", goPkg))
+			}
+		}()
 
 		if err := cmd.Run(); err != nil {
 			fmt.Println(err)
